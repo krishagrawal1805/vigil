@@ -201,7 +201,7 @@ export function App() {
 			if (!activeLab) {
 				const labRes = await startLab({ duration_minutes: 60 }).unwrap();
 				activeLab = labRes.lab_session;
-				grantId = labRes.grant_id;
+				grantId = labRes.grant?.grant_id || labRes.lab_session?.grant_id || (labRes as any).grant_id;
 			}
 			// 2. Launch autonomous assessment immediately
 			const res = await startAssessmentRun({ grant_id: grantId }).unwrap();
@@ -355,7 +355,16 @@ export function App() {
 	const handleStartAssessment = async (grantId?: string, targetUrl?: string) => {
 		setActionMessage(null);
 		try {
-			const res = await startAssessmentRun({ grant_id: grantId, target_url: targetUrl }).unwrap();
+			let effectiveGrantId = grantId;
+			if (!effectiveGrantId) {
+				const activeLab = managedLabs?.find((l) => l.status === "running");
+				if (activeLab?.grant_id) {
+					effectiveGrantId = activeLab.grant_id;
+				} else {
+					return await handleDirectPracticeLaunch();
+				}
+			}
+			const res = await startAssessmentRun({ grant_id: effectiveGrantId, target_url: targetUrl }).unwrap();
 			setActionMessage({
 				type: "success",
 				text: `Autonomous pentest launched! Run ID: ${res.run_id || "active"}. Target: ${res.target}.`,
@@ -553,6 +562,8 @@ export function App() {
 							results={assessmentResults}
 							liveStatus={liveStatus}
 							managedLabs={managedLabs}
+							onStartAssessment={handleStartAssessment}
+							isStartingRun={isStartingRun || isStartingPractice}
 							onStopAssessment={handleStopAssessment}
 							isStoppingRun={isStoppingRun}
 							onRefresh={handleRefreshAll}

@@ -53,6 +53,8 @@ interface LiveAssessmentViewProps {
 	results?: AssessmentResultsResponse;
 	liveStatus?: AssessmentStatusResponse;
 	managedLabs?: LabSession[];
+	onStartAssessment?: (grantId?: string, targetUrl?: string) => Promise<any>;
+	isStartingRun?: boolean;
 	onStopAssessment: (runId?: string) => Promise<void>;
 	isStoppingRun: boolean;
 	onRefresh: () => void;
@@ -116,6 +118,8 @@ export function LiveAssessmentView({
 	results,
 	liveStatus,
 	managedLabs,
+	onStartAssessment,
+	isStartingRun = false,
 	onStopAssessment,
 	isStoppingRun,
 	onRefresh,
@@ -125,6 +129,16 @@ export function LiveAssessmentView({
 	const [viewMode, setViewMode] = useState<"demo" | "standard">("demo");
 	const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 	const [isTargetExpanded, setIsTargetExpanded] = useState<boolean>(false);
+	const [isManualRefreshing, setIsManualRefreshing] = useState<boolean>(false);
+
+	const handleManualRefresh = async () => {
+		setIsManualRefreshing(true);
+		try {
+			await onRefresh();
+		} finally {
+			setTimeout(() => setIsManualRefreshing(false), 600);
+		}
+	};
 
 	const isRunning =
 		liveStatus?.status === "running" ||
@@ -641,12 +655,26 @@ export function LiveAssessmentView({
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={onRefresh}
+						onClick={handleManualRefresh}
+						disabled={isManualRefreshing}
 						className="gap-1.5 text-xs font-semibold"
 					>
-						<RefreshCw className="h-3.5 w-3.5" />
-						Refresh
+						<RefreshCw className={`h-3.5 w-3.5 ${isManualRefreshing ? "animate-spin text-blue-600" : ""}`} />
+						{isManualRefreshing ? "Refreshing..." : "Refresh"}
 					</Button>
+
+					{!isRunning && onStartAssessment && (
+						<Button
+							size="sm"
+							onClick={() => onStartAssessment()}
+							isLoading={isStartingRun}
+							disabled={isStartingRun}
+							className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+						>
+							<Play className="h-3.5 w-3.5" />
+							{results?.status === "failed" ? "Retry Assessment" : "Start Assessment"}
+						</Button>
+					)}
 
 					{isRunning && (
 						<Button
@@ -1448,6 +1476,20 @@ export function LiveAssessmentView({
 										<p className="text-xs text-muted-foreground leading-relaxed">
 											{getAgentActivityDescription()}
 										</p>
+										{results?.status === "failed" && !isRunning && onStartAssessment && (
+											<div className="pt-2">
+												<Button
+													size="sm"
+													onClick={() => onStartAssessment()}
+													isLoading={isStartingRun}
+													disabled={isStartingRun}
+													className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+												>
+													<Play className="h-3.5 w-3.5" />
+													Retry Assessment Now
+												</Button>
+											</div>
+										)}
 									</div>
 								</div>
 								<Button
