@@ -12,7 +12,7 @@ Enforces:
 """
 
 from typing import Dict, Any, Tuple
-from core.assessment.runner.AEGIS_runner import IsolatedRunLedger, HypothesisState, redact_sensitive_data
+from core.assessment.runner.vigil_runner import IsolatedRunLedger, HypothesisState, redact_sensitive_data
 
 class IndependentValidator:
     """Independently evaluates candidate findings before central ledger commitment."""

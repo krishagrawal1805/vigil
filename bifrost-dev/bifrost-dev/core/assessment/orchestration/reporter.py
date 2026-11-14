@@ -7,7 +7,7 @@ alignment into a comprehensive, professional Executive Penetration Testing Repor
 
 import time
 from typing import List, Dict, Any
-from core.assessment.runner.AEGIS_runner import IsolatedRunLedger
+from core.assessment.runner.vigil_runner import IsolatedRunLedger
 from .coordinator import AgentTask
 
 class ExecutiveReporter:

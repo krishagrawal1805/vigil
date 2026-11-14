@@ -24,7 +24,7 @@ from agents.memory.sqlite_session import SQLiteSession
 from openai import AsyncOpenAI
 
 from core.assessment.capabilities.registry import get_capability_registry
-from core.assessment.runner.AEGIS_runner import (
+from core.assessment.runner.vigil_runner import (
     IsolatedRunLedger,
     HypothesisState,
     Hypothesis,
