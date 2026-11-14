@@ -125,6 +125,7 @@ func (h *PlatformHandler) handleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
+		Name     string `json:"name"`
 		Username string `json:"username"`
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -140,7 +141,7 @@ func (h *PlatformHandler) handleRegister(w http.ResponseWriter, r *http.Request)
 	isAdmin := caller != nil && caller.Role == RoleAdmin
 	isPublic := !isAdmin
 
-	user, err := h.userStore.RegisterUser(req.Username, req.Email, req.Password, req.OrgID, req.Role, isPublic)
+	user, err := h.userStore.RegisterUserWithName(req.Name, req.Username, req.Email, req.Password, req.OrgID, req.Role, isPublic)
 	if err != nil {
 		h.auditLogger.Log("REGISTRATION_REJECTED", req.Username, req.OrgID, err.Error())
 		writeError(w, http.StatusForbidden, err.Error())

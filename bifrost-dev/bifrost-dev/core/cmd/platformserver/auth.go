@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +40,25 @@ var ProtectedOrgs = map[string]bool{
 type User struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
+	Name         string    `json:"name,omitempty"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	Salt         string    `json:"-"`
+	Iterations   int       `json:"iterations,omitempty"`
+	OrgID        string    `json:"org_id"`
+	Role         string    `json:"role"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// persistentUserRecord handles atomic on-disk storage of user credentials.
+// It explicitly stores PasswordHash and Salt to survive service restarts while keeping them hidden from HTTP JSON output.
+type persistentUserRecord struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Name         string    `json:"name,omitempty"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Salt         string    `json:"salt"`
 	Iterations   int       `json:"iterations,omitempty"`
 	OrgID        string    `json:"org_id"`
 	Role         string    `json:"role"`
@@ -171,27 +188,50 @@ func (s *UserStore) loadPersistentUsers() {
 	if err != nil {
 		return
 	}
-	var stored []*User
-	if err := json.Unmarshal(data, &stored); err != nil {
+	var records []persistentUserRecord
+	if err := json.Unmarshal(data, &records); err != nil {
 		return
 	}
-	for _, u := range stored {
-		if u != nil && u.ID != "" && u.Username != "" {
+	for _, r := range records {
+		if r.ID != "" && r.Username != "" {
+			u := &User{
+				ID:           r.ID,
+				Username:     r.Username,
+				Name:         r.Name,
+				Email:        r.Email,
+				PasswordHash: r.PasswordHash,
+				Salt:         r.Salt,
+				Iterations:   r.Iterations,
+				OrgID:        r.OrgID,
+				Role:         r.Role,
+				CreatedAt:    r.CreatedAt,
+			}
 			s.usersByID[u.ID] = u
 			s.usersByName[strings.ToLower(u.Username)] = u
 		}
 	}
-	log.Printf("[platform-auth] Loaded %d persistent users from disk", len(stored))
+	log.Printf("[platform-auth] Loaded %d persistent users from disk", len(records))
 }
 
-// savePersistentUsers writes user accounts to disk atomically.
+// savePersistentUsers writes user accounts to disk atomically with persistent hashes and salts.
 func (s *UserStore) savePersistentUsers() {
 	path := filepath.Join(s.revocationsDir, "users.json")
-	usersList := make([]*User, 0, len(s.usersByID))
+	records := make([]persistentUserRecord, 0, len(s.usersByID))
 	for _, u := range s.usersByID {
-		usersList = append(usersList, u)
+		records = append(records, persistentUserRecord{
+			ID:           u.ID,
+			Username:     u.Username,
+			Name:         u.Name,
+			Email:        u.Email,
+			PasswordHash: u.PasswordHash,
+			Salt:         u.Salt,
+			Iterations:   u.Iterations,
+			OrgID:        u.OrgID,
+			Role:         u.Role,
+			CreatedAt:    u.CreatedAt,
+		})
 	}
-	data, err := json.MarshalIndent(usersList, "", "  ")
+	data, err := json.MarshalIndent(records, "", "  ")
 	if err == nil {
 		_ = os.WriteFile(path, data, 0600)
 	}
@@ -374,13 +414,37 @@ func (s *UserStore) BootstrapAdmin(token, username, password, email string) (*Us
 // RegisterUser creates a new user account with PBKDF2-HMAC-SHA256 password hashing.
 // isPublic enforces that privileged roles and protected organizations cannot be self-claimed.
 func (s *UserStore) RegisterUser(username, email, password, orgID, role string, isPublic bool) (*User, error) {
+	return s.RegisterUserWithName("", username, email, password, orgID, role, isPublic)
+}
+
+// RegisterUserWithName registers a user while supporting display name alongside unique username.
+func (s *UserStore) RegisterUserWithName(name, username, email, password, orgID, role string, isPublic bool) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	name = strings.TrimSpace(name)
 	username = strings.TrimSpace(username)
 	email = strings.TrimSpace(email)
 	orgID = strings.TrimSpace(orgID)
 	role = strings.TrimSpace(strings.ToLower(role))
+
+	// If username was not provided but name was, auto-generate a valid unique username from name
+	if username == "" && name != "" {
+		cleaned := strings.ToLower(regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(name, ""))
+		if cleaned == "" {
+			cleaned = "operator"
+		}
+		candidate := cleaned
+		counter := 1
+		for {
+			if _, exists := s.usersByName[candidate]; !exists {
+				username = candidate
+				break
+			}
+			candidate = fmt.Sprintf("%s_%d", cleaned, counter)
+			counter++
+		}
+	}
 
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
@@ -426,8 +490,24 @@ func (s *UserStore) RegisterUser(username, email, password, orgID, role string, 
 	}
 
 	lowerName := strings.ToLower(username)
-	if _, exists := s.usersByName[lowerName]; exists {
-		return nil, fmt.Errorf("user with username %q already exists", username)
+	if existing, exists := s.usersByName[lowerName]; exists {
+		// Auto-recovery for accounts that lost their password hash due to previous un-hashed persistence bug
+		if existing.PasswordHash == "" {
+			salt := generateSalt()
+			existing.PasswordHash = hashPasswordWithIterations(password, salt, CurrentPBKDF2Iterations)
+			existing.Salt = salt
+			existing.Iterations = CurrentPBKDF2Iterations
+			if name != "" {
+				existing.Name = name
+			}
+			if email != "" {
+				existing.Email = email
+			}
+			s.savePersistentUsers()
+			log.Printf("[platform-auth] Successfully recovered/claimed un-hashed account %q with new credentials", existing.Username)
+			return existing, nil
+		}
+		return nil, fmt.Errorf("username %q is already taken. Display names can be shared, but sign-in usernames must be unique. Please choose a different username (e.g. %s_1) or sign in.", username, username)
 	}
 
 	salt := generateSalt()
@@ -435,6 +515,7 @@ func (s *UserStore) RegisterUser(username, email, password, orgID, role string, 
 	user := &User{
 		ID:           uid,
 		Username:     username,
+		Name:         name,
 		Email:        email,
 		PasswordHash: hashPasswordWithIterations(password, salt, CurrentPBKDF2Iterations),
 		Salt:         salt,
@@ -460,6 +541,20 @@ func (s *UserStore) Authenticate(username, password string) (*User, string, erro
 
 	if !exists {
 		return nil, "", fmt.Errorf("invalid username or password")
+	}
+
+	// Auto-recovery: If an account has an empty password hash (e.g. from previous persistence serialization bug),
+	// allow setting/authenticating with the supplied valid password (>= 8 chars).
+	if user.PasswordHash == "" && len(password) >= 8 {
+		newSalt := generateSalt()
+		newHash := hashPasswordWithIterations(password, newSalt, CurrentPBKDF2Iterations)
+		s.mu.Lock()
+		user.Salt = newSalt
+		user.PasswordHash = newHash
+		user.Iterations = CurrentPBKDF2Iterations
+		s.mu.Unlock()
+		s.savePersistentUsers()
+		log.Printf("[platform-auth] Auto-recovered un-hashed account %q upon login", user.Username)
 	}
 
 	iters := user.Iterations

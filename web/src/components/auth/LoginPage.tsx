@@ -24,7 +24,7 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onSuccess, onSwitchToRegister, onBackToWebsite }: LoginPageProps) {
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => localStorage.getItem("last_username") || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,12 +173,12 @@ export function LoginPage({ onSuccess, onSwitchToRegister, onBackToWebsite }: Lo
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="username" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Username
+                Username or Sign-in ID
               </Label>
               <Input
                 id="username"
                 type="text"
-                placeholder="operator@domain"
+                placeholder="e.g. krishna or admin"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required

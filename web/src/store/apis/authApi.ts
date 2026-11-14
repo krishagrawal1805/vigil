@@ -3,6 +3,8 @@ import { baseApi, setStoredCsrfToken, clearStoredAuth } from "../baseApi";
 export interface User {
 	id: string;
 	username: string;
+	name?: string;
+	email?: string;
 	role: string;
 	org_id: string;
 	created_at: string;
@@ -29,7 +31,9 @@ export interface LoginResponse {
 }
 
 export interface RegisterRequest {
+	name?: string;
 	username: string;
+	email?: string;
 	password: string;
 	org_id?: string;
 	role?: string;
