@@ -1,0 +1,34 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+  "governance": {
+    "auth_config": {
+      "disable_auth_on_inference": true,
+      "is_enabled": false
+    },
+    "virtual_keys": [
+      {
+        "id": "vk-internal-core",
+        "is_active": true,
+        "name": "internal-platform-key",
+        "description": "Virtual key for internal platform backend",
+        "value": "vk-internal-core"
+      }
+    ]
+  },
+  "providers": {
+    "gemini": {
+      "keys": [
+        {
+          "name": "gemini-prod-key",
+          "value": "env.GEMINI_API_KEY",
+          "weight": 1,
+          "models": ["*"],
+          "use_for_batch_api": true
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 300
+      }
+    }
+  }
+}

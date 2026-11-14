@@ -1,0 +1,26 @@
+# ==============================================================================
+# Controlled Security MCP Server - Production Dockerfile
+# ==============================================================================
+
+FROM golang:alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache git gcc musl-dev
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /mock-security-server ./core/cmd/mocksecurityserver
+
+FROM alpine:3.21
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates curl
+
+COPY --from=builder /mock-security-server /usr/local/bin/mock-security-server
+
+EXPOSE 3011
+
+ENTRYPOINT ["/usr/local/bin/mock-security-server"]
+

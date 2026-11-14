@@ -1,0 +1,29 @@
+# ==============================================================================
+# Private Internal Bifrost LLM Gateway - Production Dockerfile
+# Loopback / Private Container Network Only (No Public Port Exposure)
+# ==============================================================================
+
+FROM golang:alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache git gcc musl-dev sqlite-dev
+
+COPY . .
+
+# Build bifrost-http binary
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -tags "sqlite_static" -o /bifrost-http ./transports/bifrost-http
+
+FROM alpine:3.21
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates curl
+
+COPY --from=builder /bifrost-http /usr/local/bin/bifrost-http
+
+# Strictly internal port 8080
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/bifrost-http", "-host", "0.0.0.0", "-port", "8080", "-app-dir", "/app/data"]
+

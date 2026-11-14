@@ -1,0 +1,153 @@
+# ==============================================================================
+# Enterprise Autonomous Penetration Testing Platform - Production Compose
+# Private Network Segregation & Zero Direct User Access to Internal LLM Gateway
+# ==============================================================================
+
+version: '3.8'
+
+networks:
+  # Internal Platform Network: Isolated application & gateway traffic
+  platform-net:
+    driver: bridge
+    internal: false
+
+  # Isolated Practice Lab Network: Target execution only
+  lab-net:
+    driver: bridge
+    internal: false
+
+volumes:
+  platform-data:
+    driver: local
+  bifrost-data:
+    driver: local
+  audit-logs:
+    driver: local
+  assessment-runs:
+    driver: local
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Edge Reverse Proxy & TLS Termination (Nginx)
+  # Publicly exposed on 80/443; terminates TLS and serves compiled React UI
+  # ----------------------------------------------------------------------------
+  edge-gateway:
+    image: nginx:alpine
+    container_name: platform-edge-gateway
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../web/dist:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - platform-backend
+    networks:
+      - platform-net
+
+  # ----------------------------------------------------------------------------
+  # 2. Independent Standalone Go Backend Core (Port 8000)
+  # Manages auth, workspaces, RBAC, two-person rule, assessments & audit trail
+  # ----------------------------------------------------------------------------
+  platform-backend:
+    build:
+      context: ../bifrost-dev/bifrost-dev
+      dockerfile: Dockerfile.platform-server
+    container_name: platform-backend-core
+    restart: always
+    environment:
+      - PLATFORM_ENV=production
+      - PLATFORM_COOKIE_SECURE=true
+      - PLATFORM_SEED_DEMO_USERS=true
+      - PLATFORM_INITIAL_ADMIN_PASSWORD=AdminPassword2026!
+      - PLATFORM_DATA_DIR=/data/platform
+      - PLATFORM_AUDIT_DIR=/data/audit
+      - PLATFORM_RUNS_DIR=/data/runs
+      - PLATFORM_SESSIONS_DIR=/data/runs/sessions
+      - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET}
+      - PLATFORM_AUDIT_KEY=${PLATFORM_AUDIT_KEY}
+      - BIFROST_LLM_BASE=http://bifrost-internal-llm:8080/v1
+      - BIFROST_VIRTUAL_KEY=${BIFROST_VIRTUAL_KEY}
+      - BIFROST_MCP_URL=http://controlled-security-mcp:3011
+      - BIFROST_MODEL=${BIFROST_MODEL:-gemini-2.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - PRACTICE_LAB_URL=${PRACTICE_LAB_URL:-http://platform-practice-lab:3000}
+      - PRACTICE_LAB_BROWSER_URL=${PRACTICE_LAB_BROWSER_URL:-http://127.0.0.1:5000}
+      - AUTH_GRANTS_FILE=/data/platform/bifrost_auth_grants.json
+    volumes:
+      - platform-data:/data/platform
+      - audit-logs:/data/audit
+      - assessment-runs:/data/runs
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8000"
+    depends_on:
+      - bifrost-internal-llm
+      - controlled-security-mcp
+    networks:
+      - platform-net
+      - lab-net
+
+  # ----------------------------------------------------------------------------
+  # 3. Controlled Security MCP Server (Port 3011)
+  # Executes 13 controlled security capabilities with deterministic scope enforcement
+  # ----------------------------------------------------------------------------
+  controlled-security-mcp:
+    build:
+      context: ../bifrost-dev/bifrost-dev
+      dockerfile: Dockerfile.mcp-server
+    container_name: platform-mcp-security
+    restart: always
+    environment:
+      - MCP_PORT=3011
+      - MCP_HOST=0.0.0.0
+      - AUTH_GRANTS_FILE=/data/platform/bifrost_auth_grants.json
+    volumes:
+      - platform-data:/data/platform
+    expose:
+      - "3011"
+    networks:
+      - platform-net
+      - lab-net
+
+  # ----------------------------------------------------------------------------
+  # 4. Private Loopback-Only Bifrost LLM Gateway (Port 8080)
+  # NO EXTERNAL PORTS PUBLISHED - Strictly loopback proxy to Google Gemini API
+  # ----------------------------------------------------------------------------
+  bifrost-internal-llm:
+    build:
+      context: ../bifrost-dev/bifrost-dev
+      dockerfile: Dockerfile.bifrost-gateway
+    container_name: platform-bifrost-llm
+    restart: always
+    environment:
+      - BIFROST_TEST_MODE=false
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BIFROST_SETUP_TOKEN=${BIFROST_SETUP_TOKEN}
+    volumes:
+      - bifrost-data:/app/data
+    expose:
+      - "8080"
+    networks:
+      - platform-net
+
+  # ----------------------------------------------------------------------------
+  # 5. Managed Practice Lab Target (Port 5000)
+  # OWASP Juice Shop / isolated mock web app target in segregated network
+  # ----------------------------------------------------------------------------
+  practice-lab-target:
+    image: bkimminich/juice-shop:latest
+    container_name: platform-practice-lab
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:3000"
+    expose:
+      - "3000"
+    networks:
+      lab-net:
+        aliases:
+          - practice-lab-target
+          - platform-practice-lab
+
